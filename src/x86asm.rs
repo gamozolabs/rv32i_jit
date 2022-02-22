@@ -4,7 +4,7 @@
 
 #![cfg(target_arch = "x86_64")]
 
-use crate::{ExitStatus, Condition, Reg, Label, Perm};
+use crate::vm::{ExitStatus, Condition, Reg, Label, Perm, Assembler};
 
 // We allocate the pseudo-architecture registers as such:
 //
@@ -76,7 +76,7 @@ macro_rules! load_asm_template {
 }
 
 impl<const BASE: u32, const MEMSIZE: usize, const INSTRS: usize>
-        crate::Assembler<BASE, MEMSIZE, INSTRS> for
+        Assembler<BASE, MEMSIZE, INSTRS> for
         AsmStream<BASE, MEMSIZE, INSTRS> {
     fn label(&mut self) -> Label {
         Label(self.bytes.len())

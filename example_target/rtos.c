@@ -104,7 +104,15 @@ int _read(int file, char *ptr, int len) {
 
 // Increase program data space
 caddr_t _sbrk(int incr) {
-    return (caddr_t)syscall(102, incr);
+    caddr_t ret = (caddr_t)syscall(102, incr);
+
+    // Make sure sbrk() was successful
+    if((long)ret == -1) {
+        // Out of program data space
+        _exit(-1234);
+    }
+
+    return ret;
 }
 
 // Status of a file (by name). Minimal implementation
