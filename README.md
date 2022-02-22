@@ -19,6 +19,15 @@ Anyways, it's a really simple design and should be easy to hack on or add a
 backend that isn't x86, you only have to implement a very small assembler
 to get support for your architecture!
 
+# Building apps
+
+To build applications, you'll need a RV32i newlib toolchain. Specifically you
+need to build all code with `-march=rv32i` and as soft-float, and you need
+to build with `-specs=nosys.specs` as is done in the example project. This
+should provide a nearly full-featured libc environment, and thus most
+single-threaded basic C code should build and run in this environment. It's
+up to you to define your syscalls as needed.
+
 # Features
 
 - Byte-level permissions (can add ASAN-level protections to binary code)
