@@ -166,6 +166,12 @@ impl<const BASE: u32, const MEMSIZE: usize, const INSTRS: usize>
             0x00, 0x00, 0xc3
         ];
 
+        // Pad with nops until we're 2-byte aligned so we can ensure atomic
+        // replacement of the first instruction with the branch
+        while self.bytes.len() % 2 != 0 {
+            self.bytes.push(0x90);
+        }
+
         // Update exit code
         inst[0xa..][..4].copy_from_slice(
             &(ExitStatus::Coverage as u32).to_le_bytes());

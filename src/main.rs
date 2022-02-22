@@ -15,6 +15,7 @@ fn main() -> Result<()> {
     const STACKSZ: u32   = 32 * 1024;
     const HEAPSZ:  u32   = 32 * 1024;
 
+    // Create a VM from the example target
     let mut vm = Vm::<
         x86asm::AsmStream<BASE, SIZE, INSTS>,
         BASE, SIZE, INSTS, STACKSZ, HEAPSZ
