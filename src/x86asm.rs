@@ -90,17 +90,38 @@ impl<const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
 
         // Allocate RWX memory
         let rwx = unsafe {
-            extern {
-                fn mmap(addr: usize, length: usize, prot: i32, flags: i32,
-                    fd: i32, offset: isize) -> usize;
+            #[cfg(not(target_os = "windows"))]
+            {
+                extern {
+                    fn mmap(addr: usize, length: usize, prot: i32, flags: i32,
+                        fd: i32, offset: isize) -> usize;
+                }
+
+                // Ugh, crude but w/e
+                let mem = mmap(0, self.bytes.len(), 7, 0x22, -1, 0);
+                assert!((mem as isize) > 0, "mmap(RWX) failed");
+
+                // Get a slice to the newly allocated memory
+                std::slice::from_raw_parts_mut(
+                    mem as *mut u8, self.bytes.len())
             }
+            
+            #[cfg(target_os = "windows")]
+            {
+                extern {
+                    fn VirtualAlloc(addr: usize, length: usize,
+                        typ: u32, prot: u32) -> usize;
+                }
 
-            // Ugh, crude but w/e
-            let mem = mmap(0, self.bytes.len(), 7, 0x22, -1, 0);
-            assert!((mem as isize) > 0, "mmap(RWX) failed");
+                // Ugh, crude but w/e
+                let mem = VirtualAlloc(0, self.bytes.len(),
+                    0x3000, 0x40);
+                assert!(mem != 0, "VirtualAlloc(RWX) failed");
 
-            // Get a slice to the newly allocated memory
-            std::slice::from_raw_parts_mut(mem as *mut u8, self.bytes.len())
+                // Get a slice to the newly allocated memory
+                std::slice::from_raw_parts_mut(
+                    mem as *mut u8, self.bytes.len())
+            }
         };
 
         // Copy in the bytes
