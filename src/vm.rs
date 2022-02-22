@@ -75,7 +75,7 @@ pub enum Condition {
 
 /// A trait defining the basic operations of an assembler
 pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
-                const INSTRS: usize>: Default {
+                const INSTRS: usize>: Default + Clone {
     /// Create a label for the current location in the assembly stream
     fn label(&mut self) -> Label;
 
@@ -201,6 +201,7 @@ pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
 }
 
 /// A guest virtual machine
+#[derive(Clone)]
 pub struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
           const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
           const STACK_SIZE: u32, const HEAP_SIZE: u32> {
@@ -418,6 +419,20 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
         ret.heap_end = heap + HEAP_SIZE;
 
         Ok(ret)
+    }
+
+    /// Update `self` to be in the same state as `other`
+    pub fn reset_to(&mut self, other: &Self) {
+        // Reset register state
+        self.regs.copy_from_slice(&other.regs);
+
+        // Reset memory state
+        self.memory.copy_from_slice(other.memory.as_slice());
+        self.perms.copy_from_slice(other.perms.as_slice());
+
+        // Reset heap state
+        self.heap_cur = other.heap_cur;
+        self.heap_end = other.heap_end;
     }
 
     /// Find a region of bytes which are unused (permissions are 0) which is

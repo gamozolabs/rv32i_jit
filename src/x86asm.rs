@@ -24,7 +24,7 @@ use crate::vm::{ExitStatus, Condition, Reg, Label, Perm, Assembler};
 // jit_base    - R12
 
 /// A stream of assembled bytes
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct AsmStream<const BASE: u32, const MEMSIZE: usize,
                      const INSTRS: usize> {
     /// Raw assembled bytes
