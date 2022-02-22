@@ -196,7 +196,7 @@ pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
 /// A guest virtual machine
 pub struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
           const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
-          const HEAP_SIZE: u32> {
+          const STACK_SIZE: u32, const HEAP_SIZE: u32> {
     /// VM GPR register state + PC
     regs: [u32; 33],
 
@@ -292,8 +292,8 @@ pub enum VmExit {
 
 impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
      const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
-     const HEAP_SIZE: u32>
-        Vm<ASM, BASE, MEMSIZE, INSTRS, HEAP_SIZE> {
+     const STACK_SIZE: u32, const HEAP_SIZE: u32>
+        Vm<ASM, BASE, MEMSIZE, INSTRS, STACK_SIZE, HEAP_SIZE> {
     /// Create a VM from a FELF
     pub fn from_felf(felf: impl AsRef<Path>) -> Result<Self> {
         // VMs must have a 32-bit aligned base
@@ -384,7 +384,7 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
         };
 
         // Allocate a stack
-        let stack = ret.alloc(32 * 1024).ok_or(Error::AllocStack)?;
+        let stack = ret.alloc(STACK_SIZE).ok_or(Error::AllocStack)?;
 
         // Compute the stack address
         //
@@ -393,7 +393,7 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
         // [NULL pointer (end of argv)]
         // [argv...]
         // [argc: u32]
-        ret.regs[2] = stack + 32 * 1024 - 8;
+        ret.regs[2] = stack + STACK_SIZE - 8;
 
         // Zero out argc and put a NULL terminator at argv[0]
         ret.memory[(ret.regs[2] - BASE) as usize..][..8]

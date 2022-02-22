@@ -9,13 +9,15 @@ pub use vm::{Vm, Register, VmExit, Result, Error};
 
 fn main() -> Result<()> {
     // Create the VM
-    const BASE:   u32   = 0x10000;
-    const SIZE:   usize = 256 * 1024;
-    const INSTS:  usize = SIZE / 4;
-    const HEAPSZ: u32   = 32 * 1024;
+    const BASE:    u32   = 0x10000;
+    const SIZE:    usize = 256 * 1024;
+    const INSTS:   usize = SIZE / 4;
+    const STACKSZ: u32   = 32 * 1024;
+    const HEAPSZ:  u32   = 32 * 1024;
 
     let mut vm = Vm::<
-        x86asm::AsmStream<BASE, SIZE, INSTS>, BASE, SIZE, INSTS, HEAPSZ
+        x86asm::AsmStream<BASE, SIZE, INSTS>,
+        BASE, SIZE, INSTS, STACKSZ, HEAPSZ
     >::from_felf("example_target/example.felf")?;
 
     // JIT the VM
