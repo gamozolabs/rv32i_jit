@@ -474,6 +474,34 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS, DIRTY>,
         self.heap_end = other.heap_end;
     }
 
+    /// Update permissions for `addr` for `size` bytes to `perm`
+    pub fn set_permissions(&mut self, addr: u32, size: u32, perm: u8)
+            -> Option<()> {
+        // Get the start and end indicies of the region to update
+        let start  = addr.checked_sub(BASE)?;
+        let end    = start.checked_add(size)?;
+        let region = self.perms.get_mut(start as usize..end as usize)?;
+
+        // Make sure the permission is allowed
+        let is_exec = (perm & (Perm::Exec as u8)) != 0;
+        if is_exec {
+            // Cannot create executable memory
+            return None;
+        }
+
+        // Set permissions
+        region.iter_mut().for_each(|x| *x = perm);
+
+        // Update dirty bits
+        for idx in (start / 256)..(end + 255) / 256 {
+            let byte = idx / 8;
+            let bit  = idx % 8;
+            self.dirty[byte as usize] |= 1 << bit;
+        }
+
+        Some(())
+    }
+
     /// Find a region of bytes which are unused (permissions are 0) which is
     /// large enough to hold `size` bytes
     ///
@@ -482,14 +510,13 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS, DIRTY>,
         // Attempt to find a location for the memory
         for ii in (0..self.perms.len()).step_by(16) {
             // Get a slice of memory at this address
-            if let Some(slice) = self.perms[ii..].get_mut(..size as usize){
+            if let Some(slice) = self.perms[ii..].get(..size as usize){
                 // If all permissions are completely unused, this is usable for
                 // an allocation
                 if slice.iter().all(|x| *x == 0) {
                     // Set permissions to RW for the heap
-                    slice.iter_mut().for_each(|x| {
-                        *x = Perm::Read as u8 | Perm::Write as u8
-                    });
+                    self.set_permissions(BASE + ii as u32, size,
+                        Perm::Read as u8 | Perm::Write as u8);
 
                     // Found and allocated memory!
                     return Some(BASE + ii as u32);

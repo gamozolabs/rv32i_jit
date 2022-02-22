@@ -12,6 +12,18 @@ entry:
     ; Save the address to fetch
     mov ebx, eax
 
+    ; Check alignment of access
+%if OPSIZE == 8
+%elif OPSIZE == 16
+    test eax, 1
+    jnz  .fault
+%elif OPSIZE == 32
+    test eax, 3
+    jnz  .fault
+%else
+%error "Invalid OPSIZE"
+%endif
+
     ; Subtract the base
     sub eax, BASE
 
