@@ -27,9 +27,7 @@ fn main() -> Result<()> {
     'vm_loop: loop {
         let exit = vm.run();
         match exit {
-            VmExit::Coverage => {
-                println!("{:x}", vm.reg(Register::PC));
-            }
+            VmExit::Coverage => {},
             VmExit::Ecall => {
                 // Syscall
                 let number = vm.reg(Register::A7);
