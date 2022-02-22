@@ -3,5 +3,12 @@
 version = 3
 
 [[package]]
-name = "jit"
+name = "example_harness"
+version = "0.1.0"
+dependencies = [
+ "vm",
+]
+
+[[package]]
+name = "vm"
 version = "0.1.0"

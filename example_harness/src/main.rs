@@ -1,16 +1,12 @@
-//! An extremely basic RISC-V (rv32i) emulator
-
-#![feature(array_chunks, scoped_threads)]
-
-mod vm;
-pub mod x86asm;
-
-pub use vm::{Vm, Register, VmExit, Result, Error};
+#![feature(scoped_threads)]
 
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::BTreeSet;
+
+use vm::{Vm, Register, VmExit, Result};
+use vm::x86asm::AsmStream;
 
 // VM properties we're going to use
 const BASE:    u32   = 0x10000;
@@ -22,7 +18,7 @@ const DIRTY:   usize = SIZE / (256 * 8);
 
 /// Re-type a VM with our specific properties
 type OurVm = Vm::<
-    x86asm::AsmStream<BASE, SIZE, INSTS, DIRTY>,
+    AsmStream<BASE, SIZE, INSTS, DIRTY>,
     BASE, SIZE, INSTS, STACKSZ, HEAPSZ, DIRTY
 >;
 
@@ -149,7 +145,7 @@ fn main() -> Result<()> {
     // Create the VM
 
     // Create a VM from the example target
-    let mut orig_vm = OurVm::from_felf("example_target/example.felf")?;
+    let mut orig_vm = OurVm::from_felf("example.felf")?;
 
     // JIT the VM
     orig_vm.jit()?;
@@ -159,7 +155,7 @@ fn main() -> Result<()> {
 
     // Fork the VM for each thread
     std::thread::scope(|s| {
-        for _ in 0..8 {
+        for _ in 0..1 {
             let vm = orig_vm.clone();
             s.spawn(|_| {
                 worker(&orig_vm, vm, &stats);
