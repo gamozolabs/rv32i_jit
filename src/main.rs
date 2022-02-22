@@ -366,7 +366,20 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
                     });
 
                     // Compute the stack address
-                    regs[2] = BASE + ii as u32;
+                    //
+                    // Stack upon _start should be:
+                    // [END OF STACK]
+                    // [NULL pointer]
+                    // [arg2...]
+                    // [arg1]
+                    // [arg0]
+                    // [argc: u32]
+                    regs[2] = BASE + ii as u32 + 32 * 1024 - 8;
+
+                    // Zero out argc and put a NULL terminator on argv
+                    raw_memory[(regs[2] - BASE) as usize..][..8]
+                        .copy_from_slice(&[0u8; 8]);
+
                     break;
                 }
             }

@@ -1,9 +1,9 @@
 #include <stdio.h>
 
 int
-main(void) {
+main(int argc, char *argv[]) {
     // Crash!
-    *(volatile int*)0x13371330 = 0;
+    *(volatile int*)0x13371330 = argv;
 
     return 0;
 }
