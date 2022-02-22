@@ -350,7 +350,27 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
 
         // Create registers
         let mut regs = [0u32; 33];
+
+        // Update starting PC to be the start location for the binary
         regs[32] = entry;
+
+        // Attempt to find a location for a 16-byte aligned 32 KiB stack
+        for ii in (0..raw_perms.len()).step_by(16) {
+            // Get a 32-KiB slice at this address
+            if let Some(slice) = raw_perms[ii..].get_mut(..32 * 1024) {
+                // If all permissions are completely unused, we found a stack
+                if slice.iter().all(|x| *x == 0) {
+                    // Set permissions to RX for the stack
+                    slice.iter_mut().for_each(|x| {
+                        *x = Perm::Read as u8 | Perm::Write as u8
+                    });
+
+                    // Compute the stack address
+                    regs[2] = BASE + ii as u32;
+                    break;
+                }
+            }
+        }
 
         // Return the clean VM state
         Ok(Self {
@@ -881,7 +901,7 @@ fn main() -> Result<()> {
 
     let mut vm = Vm::<
         x86asm::AsmStream<BASE, SIZE, INSTS>, BASE, SIZE, INSTS
-    >::from_felf("../../x509-parser/moose.felf")?;
+    >::from_felf("example_target/example.felf")?;
 
     // JIT the VM
     vm.jit()?;
