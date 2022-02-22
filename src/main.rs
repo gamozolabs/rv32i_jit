@@ -85,6 +85,16 @@ pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
     ///
     /// Upon return A should be the `ExitStatus` code that caused the exit
     /// B should be further information for the exit status
+    ///
+    /// Exiting the JIT requires that you correctly update `regs[32]` with
+    /// the PC value which reflects where the exit occurred
+    ///
+    /// ExecFault     - PC should be the instruction that was attempted to exec
+    /// ReadFault     - PC should be the address of the faulting instruction
+    /// WriteFault    - PC should be the address of the faulting instruction
+    /// InvalidOpcode - PC should be the address of the invalid instruction
+    /// Ecall         - PC should be the address of the following instruction
+    /// Ebreak        - PC should be the address of the following instruction
     unsafe fn enter_jit(
         &self,
         label:     Label,
