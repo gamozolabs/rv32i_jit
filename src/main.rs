@@ -8,7 +8,9 @@ pub mod x86asm;
 pub use vm::{Vm, Register, VmExit, Result, Error};
 
 use std::time::{Duration, Instant};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::BTreeSet;
 
 // VM properties we're going to use
 const BASE:    u32   = 0x10000;
@@ -43,6 +45,9 @@ struct Statistics {
 
     /// Cycles handling VM exits
     cycles_vmexit: AtomicU64,
+
+    /// Coverage database, set of unique PCs executed
+    coverage: Mutex<BTreeSet<u32>>,
 }
 
 /// Worker thread for fuzz workers
@@ -73,7 +78,11 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics) {
             // Handle vmexits
             let it = rdtsc();
             match exit {
-                VmExit::Coverage => {},
+                VmExit::Coverage => {
+                    // Record coverage
+                    let pc = vm.reg(Register::PC);
+                    stats.coverage.lock().unwrap().insert(pc);
+                }
                 VmExit::Ecall => {
                     // Syscall
                     let number = vm.reg(Register::A7);
@@ -150,7 +159,7 @@ fn main() -> Result<()> {
 
     // Fork the VM for each thread
     std::thread::scope(|s| {
-        for _ in 0..8 {
+        for _ in 0..32 {
             let vm = orig_vm.clone();
             s.spawn(|_| {
                 worker(&orig_vm, vm, &stats);
@@ -164,17 +173,19 @@ fn main() -> Result<()> {
             std::thread::sleep(Duration::from_millis(100));
 
             // Print stats
-            let uptime = it.elapsed().as_secs_f64();
-            let cases  = stats.cases.load(Ordering::Relaxed);
-            let crst   = stats.cycles_reset.load(Ordering::Relaxed);
-            let crun   = stats.cycles_run.load(Ordering::Relaxed);
-            let cvme   = stats.cycles_vmexit.load(Ordering::Relaxed);
-            let ctot   = crst + crun + cvme;
-            let fcps   = cases as f64 / uptime;
-            let prst   = crst as f64 / ctot as f64;
-            let prun   = crun as f64 / ctot as f64;
-            let pvme   = cvme as f64 / ctot as f64;
+            let coverage = stats.coverage.lock().unwrap().len();
+            let uptime   = it.elapsed().as_secs_f64();
+            let cases    = stats.cases.load(Ordering::Relaxed);
+            let crst     = stats.cycles_reset.load(Ordering::Relaxed);
+            let crun     = stats.cycles_run.load(Ordering::Relaxed);
+            let cvme     = stats.cycles_vmexit.load(Ordering::Relaxed);
+            let ctot     = crst + crun + cvme;
+            let fcps     = cases as f64 / uptime;
+            let prst     = crst as f64 / ctot as f64;
+            let prun     = crun as f64 / ctot as f64;
+            let pvme     = cvme as f64 / ctot as f64;
             println!("[{uptime:12.6}] cases {cases:10} | fcps {fcps:10.1} | \
+                coverage {coverage:7} | \
                 reset {prst:5.3} | run {prun:5.3} | vmexit {pvme:5.3}");
         }
     });
