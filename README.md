@@ -19,6 +19,20 @@ Anyways, it's a really simple design and should be easy to hack on or add a
 backend that isn't x86, you only have to implement a very small assembler
 to get support for your architecture!
 
+# Features
+
+- Byte-level permissions (can add ASAN-level protections to binary code)
+- Scales linearly with cores (nothing shared between cores or using Linux
+  syscalls)
+- PC-level code coverage that converges to no overhead since it stops reporting
+  once hit
+- Easy-to-use interface (read and write registers, handle vmexits as needed)
+- Out-performs Linux by a significant margin for process startup and forking
+- Simple code which is designed to be easy to hook and modify
+- Differential resetting of VMs based on dirtied memory
+- Easy-to-port backend for making a JIT for your desired architecture, only
+  about ~300 LoC to implement a fully-featured backend
+
 # Example
 
 The current example in the tree (as of `0521ad1`) demonstrates spinning up
@@ -28,4 +42,16 @@ I get approximately ~107k hello worlds per second on a single 2.1 GHz core,
 and on my 192 thread (96 core) 2.3 GHz server I get approximately 8.6 million
 hello worlds per second. Near-linear scaling while gahtering code coverage
 and the like.
+
+```
+pleb@polar ~ $ ./jit 
+[    0.100064] cases    1109821 | fcps 11091081.8 | coverage    1522 | reset 0.028 | run 0.953 | vmexit 0.019
+[    0.200148] cases    1748147 | fcps  8734259.0 | coverage    1522 | reset 0.029 | run 0.952 | vmexit 0.019
+[    0.300216] cases    2536983 | fcps  8450525.5 | coverage    1522 | reset 0.029 | run 0.952 | vmexit 0.019
+[    0.400283] cases    3293115 | fcps  8226972.7 | coverage    1522 | reset 0.029 | run 0.952 | vmexit 0.019
+[    0.500350] cases    4054432 | fcps  8103192.5 | coverage    1522 | reset 0.030 | run 0.952 | vmexit 0.018
+[    0.600418] cases    4851220 | fcps  8079734.0 | coverage    1522 | reset 0.030 | run 0.952 | vmexit 0.018
+[    0.700485] cases    5648671 | fcps  8063940.7 | coverage    1522 | reset 0.030 | run 0.952 | vmexit 0.018
+[    0.800658] cases    6490916 | fcps  8106977.7 | coverage    1522 | reset 0.031 | run 0.952 | vmexit 0.018
+```
 
