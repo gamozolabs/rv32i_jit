@@ -49,7 +49,6 @@ entry:
 %else
 %error "Invalid OPSIZE"
 %endif
-    jmp short .good
 %elif STORE == 1
     ; Everything is good, store to memory
 %if OPSIZE == 8
@@ -64,6 +63,9 @@ entry:
 %else
 %error "Invalid STORE"
 %endif
+
+    ; Operation was successful, go to next instruction!
+    jmp short .good
 
 .fault:
 %if STORE == 0

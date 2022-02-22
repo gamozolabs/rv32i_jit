@@ -559,7 +559,7 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
                         // LHU
                         0b101 => self.asm.load_u16_a(pc),
 
-                        _     => unreachable!(),
+                        _ => unreachable!(),
                     }
 
                     if rd != 0 {
