@@ -3,7 +3,7 @@
 #![feature(array_chunks)]
 
 mod vm;
-mod x86asm;
+pub mod x86asm;
 
 pub use vm::{Vm, Register, VmExit, Result, Error};
 
@@ -27,6 +27,9 @@ fn main() -> Result<()> {
     'vm_loop: loop {
         let exit = vm.run();
         match exit {
+            VmExit::Coverage => {
+                println!("{:x}", vm.reg(Register::PC));
+            }
             VmExit::Ecall => {
                 // Syscall
                 let number = vm.reg(Register::A7);

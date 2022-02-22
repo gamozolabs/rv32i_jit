@@ -106,6 +106,13 @@ pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
         jit_table: &[Label; INSTRS],
     ) -> (u32, u32);
 
+    /// Emit an operation which will cause a `Coverage` vmexit, but only
+    /// the first time it is hit per occurance of `coverage_oneshot`
+    /// It's okay if this fires a coverage event for the same PC multiple
+    /// times (eg. while waiting for caches to update), but it should attempt
+    /// to self-silence as soon as possible
+    fn coverage_oneshot(&mut self, pc: u32);
+
     /// Emit a load immediate into a register
     fn load_imm(&mut self, reg: Reg, val: u32);
 
@@ -258,6 +265,9 @@ pub enum ExitStatus {
     /// An `ebreak` instruction was executed, PC will point to the following
     /// instruction for re-entry
     Ebreak = 0xdead0005,
+
+    /// An instruction has been hit for the first time
+    Coverage = 0xdead0006,
 }
 
 /// RISCV register names
@@ -288,6 +298,9 @@ pub enum VmExit {
 
     /// Guest executed an `ebreak` instruction
     Ebreak,
+
+    /// New code was executed for the first time
+    Coverage,
 }
 
 impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
@@ -487,6 +500,9 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
 
             // Update JIT table
             self.jit_table[inst_idx] = self.asm.label();
+
+            // Emit oneshot coverage logging
+            self.asm.coverage_oneshot(pc);
 
             // If it's not executable, emit the execution fault code
             if !executable {
@@ -971,9 +987,12 @@ t5   {:08x} t6 {:08x}
             VmExit::Ecall
         } else if code == ExitStatus::Ebreak as u32 {
             VmExit::Ebreak
+        } else if code == ExitStatus::Coverage as u32 {
+            VmExit::Coverage
         } else {
             panic!("VM exited with unknown exit status {:#x} {:#x}",
                 code, status);
         }
     }
 }
+

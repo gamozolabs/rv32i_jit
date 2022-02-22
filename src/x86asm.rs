@@ -149,6 +149,34 @@ impl<const BASE: u32, const MEMSIZE: usize, const INSTRS: usize>
         (a, b)
     }
 
+    fn coverage_oneshot(&mut self, pc: u32) {
+        /*
+        entry:
+            mov word [rel entry], 0x19eb
+            mov eax, 0xdead0006
+            mov ecx, 0x13371337
+            mov [r8 + 32 * 4], ecx
+            ret
+        */
+
+        let mut inst = [
+            0x66, 0xc7, 0x05, 0xf7, 0xff, 0xff, 0xff, 0xeb,
+            0x19, 0xb8, 0x06, 0x00, 0xad, 0xde, 0xb9, 0x37,
+            0x13, 0x37, 0x13, 0x41, 0x89, 0x88, 0x80, 0x00,
+            0x00, 0x00, 0xc3
+        ];
+
+        // Update exit code
+        inst[0xa..][..4].copy_from_slice(
+            &(ExitStatus::Coverage as u32).to_le_bytes());
+        
+        // Update exit PC
+        inst[0xf..][..4].copy_from_slice(&pc.to_le_bytes());
+
+        // Add the payload into the assembly stream
+        self.bytes.extend_from_slice(&inst);
+    }
+
     fn load_imm(&mut self, reg: Reg, val: u32) {
         match reg {
             Reg::A => {
