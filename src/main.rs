@@ -16,11 +16,12 @@ const SIZE:    usize = 256 * 1024;
 const INSTS:   usize = SIZE / 4;
 const STACKSZ: u32   = 32 * 1024;
 const HEAPSZ:  u32   = 32 * 1024;
+const DIRTY:   usize = SIZE / (256 * 8);
 
 /// Re-type a VM with our specific properties
 type OurVm = Vm::<
-    x86asm::AsmStream<BASE, SIZE, INSTS>,
-    BASE, SIZE, INSTS, STACKSZ, HEAPSZ
+    x86asm::AsmStream<BASE, SIZE, INSTS, DIRTY>,
+    BASE, SIZE, INSTS, STACKSZ, HEAPSZ, DIRTY
 >;
 
 /// Simple wrapper to get the TSC
@@ -61,13 +62,15 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics) {
         vm.reset_to(orig_vm);
         cycles_reset += rdtsc() - it;
 
-        // Execute VM
+        // Loop while handling vmexits
         let mut execute = true;
         while execute {
+            // Execute the VM!
             let it = rdtsc();
             let exit = vm.run();
             cycles_run += rdtsc() - it;
 
+            // Handle vmexits
             let it = rdtsc();
             match exit {
                 VmExit::Coverage => {},
@@ -147,7 +150,7 @@ fn main() -> Result<()> {
 
     // Fork the VM for each thread
     std::thread::scope(|s| {
-        for _ in 0..32 {
+        for _ in 0..1 {
             let vm = orig_vm.clone();
             s.spawn(|_| {
                 worker(&orig_vm, vm, &stats);

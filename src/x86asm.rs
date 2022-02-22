@@ -22,11 +22,12 @@ use crate::vm::{ExitStatus, Condition, Reg, Label, Perm, Assembler};
 // permissions - R10
 // jit_table   - R11
 // jit_base    - R12
+// dirty       - R13
 
 /// A stream of assembled bytes
 #[derive(Default, Clone)]
 pub struct AsmStream<const BASE: u32, const MEMSIZE: usize,
-                     const INSTRS: usize> {
+                     const INSTRS: usize, const DIRTY: usize> {
     /// Raw assembled bytes
     bytes: Vec<u8>,
 
@@ -75,9 +76,10 @@ macro_rules! load_asm_template {
     }}
 }
 
-impl<const BASE: u32, const MEMSIZE: usize, const INSTRS: usize>
-        Assembler<BASE, MEMSIZE, INSTRS> for
-        AsmStream<BASE, MEMSIZE, INSTRS> {
+impl<const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
+     const DIRTY: usize>
+        Assembler<BASE, MEMSIZE, INSTRS, DIRTY> for
+        AsmStream<BASE, MEMSIZE, INSTRS, DIRTY> {
     fn label(&mut self) -> Label {
         Label(self.bytes.len())
     }
@@ -117,6 +119,7 @@ impl<const BASE: u32, const MEMSIZE: usize, const INSTRS: usize>
         regs:      &mut [u32; 33],
         mem:       &mut [u8; MEMSIZE],
         perms:     &mut [u8; MEMSIZE],
+        dirty:     &mut [u8; DIRTY],
         jit_table: &[Label; INSTRS],
     ) -> (u32, u32) {
         // Get executable code address
@@ -141,6 +144,7 @@ impl<const BASE: u32, const MEMSIZE: usize, const INSTRS: usize>
         in("r10") perms.as_mut_ptr(),
         in("r11") jit_table.as_ptr(),
         in("r12") exec,
+        in("r13") dirty.as_mut_ptr(),
         out("eax") a,
         out("ecx") b,
         out("edx") _);

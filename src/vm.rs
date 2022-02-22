@@ -45,6 +45,10 @@ pub enum Error {
 
     /// Failed to find a location to allocate the heap
     AllocHeap,
+
+    /// Dirty bits are expected to be at a ratio of 1:256 compared to memory
+    /// size
+    InvalidDirtyCount,
 }
 
 /// A label which references an assembly location
@@ -75,7 +79,7 @@ pub enum Condition {
 
 /// A trait defining the basic operations of an assembler
 pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
-                const INSTRS: usize>: Default + Clone {
+                    const INSTRS: usize, const DIRTY: usize>: Default + Clone {
     /// Create a label for the current location in the assembly stream
     fn label(&mut self) -> Label;
 
@@ -103,6 +107,7 @@ pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
         regs:      &mut [u32; 33],
         mem:       &mut [u8; MEMSIZE],
         perms:     &mut [u8; MEMSIZE],
+        dirty:     &mut [u8; DIRTY],
         jit_table: &[Label; INSTRS],
     ) -> (u32, u32);
 
@@ -202,9 +207,9 @@ pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
 
 /// A guest virtual machine
 #[derive(Clone)]
-pub struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
+pub struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS, DIRTY>,
           const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
-          const STACK_SIZE: u32, const HEAP_SIZE: u32> {
+          const STACK_SIZE: u32, const HEAP_SIZE: u32, const DIRTY: usize> {
     /// VM GPR register state + PC
     regs: [u32; 33],
 
@@ -213,6 +218,11 @@ pub struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
 
     /// Backing permissions for the VM
     perms: Box<[u8; MEMSIZE]>,
+
+    /// Dirty bit storage
+    /// This is a bitmap containing which bytes of memory have been written
+    /// to since the last time this was cleared
+    dirty: Box<[u8; DIRTY]>,
 
     /// Lookup table from all possible instructions to JIT labels
     jit_table: Box<[Label; INSTRS]>,
@@ -304,10 +314,10 @@ pub enum VmExit {
     Coverage,
 }
 
-impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
+impl<ASM: Assembler<BASE, MEMSIZE, INSTRS, DIRTY>,
      const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
-     const STACK_SIZE: u32, const HEAP_SIZE: u32>
-        Vm<ASM, BASE, MEMSIZE, INSTRS, STACK_SIZE, HEAP_SIZE> {
+     const STACK_SIZE: u32, const HEAP_SIZE: u32, const DIRTY: usize>
+        Vm<ASM, BASE, MEMSIZE, INSTRS, STACK_SIZE, HEAP_SIZE, DIRTY> {
     /// Create a VM from a FELF
     pub fn from_felf(felf: impl AsRef<Path>) -> Result<Self> {
         // VMs must have a 32-bit aligned base
@@ -331,6 +341,11 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
         // Make sure instruction count is accurate
         if MEMSIZE / 4 != INSTRS {
             return Err(Error::InvalidInstructionCount);
+        }
+
+        // Currently we expect 256-byte granularity for dirty bits
+        if DIRTY == 0 || DIRTY != MEMSIZE / (256 * 8) {
+            return Err(Error::InvalidDirtyCount);
         }
 
         // Read the FELF into memory
@@ -386,6 +401,10 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
         // Update starting PC to be the start location for the binary
         regs[32] = entry;
 
+        // Allocate dirty bits
+        let dirty: Box<[u8; DIRTY]> =
+            vec![0; DIRTY].into_boxed_slice().try_into().unwrap();
+
         // Return the clean VM state
         let mut ret = Self {
             memory:   raw_memory,
@@ -394,6 +413,7 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
             heap_cur: 0,
             heap_end: 0,
             jit_table,
+            dirty,
             regs,
         };
 
@@ -426,9 +446,28 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
         // Reset register state
         self.regs.copy_from_slice(&other.regs);
 
-        // Reset memory state
-        self.memory.copy_from_slice(other.memory.as_slice());
-        self.perms.copy_from_slice(other.perms.as_slice());
+        for (ii, byte) in self.dirty.iter_mut().enumerate() {
+            // Skip non-dirty bytes
+            if *byte == 0 { continue; }
+
+            // Replace the dirty byte with zero, indicating it's no longer
+            // dirty, and take it into our own ownership
+            let mut tmp = 0u8;
+            std::mem::swap(&mut tmp, byte);
+
+            for bit in 0..8 {
+                if tmp & (1 << bit) != 0 {
+                    // Determine the offset of the dirtied memory
+                    let offset = (ii * 256 * 8) + bit * 256;
+
+                    // Restore memory for this region
+                    self.memory[offset..offset + 256].copy_from_slice(
+                        &other.memory[offset..offset + 256]);
+                    self.perms[offset..offset + 256].copy_from_slice(
+                        &other.perms[offset..offset + 256]);
+                }
+            }
+        }
 
         // Reset heap state
         self.heap_cur = other.heap_cur;
@@ -986,6 +1025,7 @@ t5   {:08x} t6 {:08x}
                 &mut self.regs,
                 &mut self.memory,
                 &mut self.perms,
+                &mut self.dirty,
                 &self.jit_table)
         };
 

@@ -50,6 +50,11 @@ entry:
 %error "Invalid OPSIZE"
 %endif
 %elif STORE == 1
+    ; Update dirty bits
+    mov  rdx, rax
+    shr  rdx, 8     ; Divide by 256 to get dirty bit index
+    bts  [r13], rdx ; Set the dirty bit
+
     ; Everything is good, store to memory
 %if OPSIZE == 8
     mov byte [r9 + rax], cl
