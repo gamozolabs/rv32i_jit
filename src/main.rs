@@ -193,7 +193,8 @@ pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
 
 /// A guest virtual machine
 pub struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
-          const BASE: u32, const MEMSIZE: usize, const INSTRS: usize> {
+          const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
+          const HEAP_SIZE: u32> {
     /// VM GPR register state + PC
     regs: [u32; 33],
 
@@ -205,6 +206,12 @@ pub struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
 
     /// Lookup table from all possible instructions to JIT labels
     jit_table: Box<[Label; INSTRS]>,
+
+    /// Current heap pointer
+    heap_cur: u32,
+
+    /// End of the heap
+    heap_end: u32,
 
     /// Assembler which holds the JITted code
     asm: ASM,
@@ -251,6 +258,14 @@ enum ExitStatus {
     Ebreak = 0xdead0005,
 }
 
+/// RISCV register names
+#[derive(Clone, Copy, Debug)]
+#[repr(u8)]
+pub enum Register {
+    Zero, Ra, Sp, Gp, Tp, T0, T1, T2, Fp, S1, A0, A1, A2, A3, A4, A5, A6, A7,
+    S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, T3, T4, T5, T6, PC,
+}
+
 /// Rust-typed VM exits
 #[derive(Debug, Clone, Copy)]
 pub enum VmExit {
@@ -274,8 +289,9 @@ pub enum VmExit {
 }
 
 impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
-     const BASE: u32, const MEMSIZE: usize, const INSTRS: usize>
-        Vm<ASM, BASE, MEMSIZE, INSTRS> {
+     const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
+     const HEAP_SIZE: u32>
+        Vm<ASM, BASE, MEMSIZE, INSTRS, HEAP_SIZE> {
     /// Create a VM from a FELF
     pub fn from_felf(felf: impl AsRef<Path>) -> Result<Self> {
         // VMs must have a 32-bit aligned base
@@ -360,7 +376,7 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
             if let Some(slice) = raw_perms[ii..].get_mut(..32 * 1024) {
                 // If all permissions are completely unused, we found a stack
                 if slice.iter().all(|x| *x == 0) {
-                    // Set permissions to RX for the stack
+                    // Set permissions to RW for the stack
                     slice.iter_mut().for_each(|x| {
                         *x = Perm::Read as u8 | Perm::Write as u8
                     });
@@ -376,7 +392,7 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
                     // [argc: u32]
                     regs[2] = BASE + ii as u32 + 32 * 1024 - 8;
 
-                    // Zero out argc and put a NULL terminator on argv
+                    // Zero out argc and put a NULL terminator at argv[0]
                     raw_memory[(regs[2] - BASE) as usize..][..8]
                         .copy_from_slice(&[0u8; 8]);
 
@@ -385,11 +401,35 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
             }
         }
 
+        // Attempt to find a location for a heap
+        let mut heap = None;
+        for ii in (0..raw_perms.len()).step_by(16) {
+            // Get a 32-KiB slice at this address
+            if let Some(slice) = raw_perms[ii..].get_mut(..HEAP_SIZE as usize){
+                // If all permissions are completely unused, we found a heap
+                if slice.iter().all(|x| *x == 0) {
+                    // Set permissions to RW for the heap
+                    slice.iter_mut().for_each(|x| {
+                        *x = Perm::Read as u8 | Perm::Write as u8
+                    });
+
+                    // Update heap address
+                    heap = Some(BASE + ii as u32);
+                    break;
+                }
+            }
+        }
+
+        // Get the heap start
+        let heap_start = heap.expect("Failed to find a heap location");
+
         // Return the clean VM state
         Ok(Self {
-            memory: raw_memory,
-            perms:  raw_perms,
-            asm:    ASM::default(),
+            memory:   raw_memory,
+            perms:    raw_perms,
+            asm:      ASM::default(),
+            heap_cur: heap_start,
+            heap_end: heap_start + HEAP_SIZE as u32,
             jit_table,
             regs,
         })
@@ -869,6 +909,16 @@ t5   {:08x} t6 {:08x}
         self.regs[28], self.regs[29], self.regs[30], self.regs[31]);
     }
 
+    /// Get a register value
+    pub fn reg(&self, reg: Register) -> u32 {
+        self.regs[reg as usize]
+    }
+
+    /// Set a register value
+    pub fn set_reg(&mut self, reg: Register, val: u32) {
+        self.regs[reg as usize] = val;
+    }
+
     /// Execute the VM until the next VM exit
     pub fn run(&mut self) -> VmExit {
         // Determine the entry location
@@ -908,20 +958,67 @@ t5   {:08x} t6 {:08x}
 
 fn main() -> Result<()> {
     // Create the VM
-    const BASE:  u32   = 0x10000;
-    const SIZE:  usize = 128 * 1024;
-    const INSTS: usize = SIZE / 4;
+    const BASE:   u32   = 0x10000;
+    const SIZE:   usize = 256 * 1024;
+    const INSTS:  usize = SIZE / 4;
+    const HEAPSZ: u32   = 32 * 1024;
 
     let mut vm = Vm::<
-        x86asm::AsmStream<BASE, SIZE, INSTS>, BASE, SIZE, INSTS
+        x86asm::AsmStream<BASE, SIZE, INSTS>, BASE, SIZE, INSTS, HEAPSZ
     >::from_felf("example_target/example.felf")?;
 
     // JIT the VM
     vm.jit()?;
 
-    // Execute the VM until exit
-    println!("{:#x?}", vm.run());
-    vm.dump_regs();
+    // Execute VM
+    'vm_loop: loop {
+        let exit = vm.run();
+        match exit {
+            VmExit::Ecall => {
+                // Syscall
+                let number = vm.reg(Register::A7);
+
+                match number {
+                    100 => {
+                        // Write byte in A0
+                        let byte = vm.reg(Register::A0) as u8;
+                        print!("{}", byte as char);
+                    }
+                    101 => {
+                        // Exit
+                        let code = vm.reg(Register::A0) as i32;
+                        println!("Exited with: {}", code);
+                        break 'vm_loop;
+                    }
+                    102 => {
+                        // Sbrk
+                        let increase = vm.reg(Register::A0) as i32;
+                        assert!(increase >= 0,
+                            "We don't support reducing memory");
+
+                        // Get the current heap location
+                        let ret = vm.heap_cur;
+
+                        // Update heap
+                        vm.heap_cur = vm.heap_cur
+                            .checked_add(increase as u32)
+                            .expect("Heap integer overflow");
+
+                        // Make sure we're in bounds of the heap
+                        assert!(vm.heap_cur < vm.heap_end);
+
+                        // Return allocated memory
+                        vm.set_reg(Register::A0, ret);
+                    }
+                    _ => panic!("Unhandled syscall {}", number),
+                }
+            }
+            _ => {
+                vm.dump_regs();
+                panic!("Unhandled vmexit {:x?}", exit);
+            }
+        }
+    }
 
     Ok(())
 }
