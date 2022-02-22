@@ -19,6 +19,20 @@ Anyways, it's a really simple design and should be easy to hack on or add a
 backend that isn't x86, you only have to implement a very small assembler
 to get support for your architecture!
 
+# PRs
+
+I will not be accepting any PRs that increase complexity to the JIT output.
+It is intentional that there is no register scheduling and all register
+accesses in the JIT result in memory accesses. I also will not be making
+branches anything other than fully indirect to make sure there's only one
+location where all branches go through. I know this is slow, this is not
+supposed to be fast.
+
+Nevertheless, I'll accept PRs for basic cleanup and stuff. That being said,
+this project will not really be maintained, it's just to collect some basic
+data I want for slides for a presentation. It's not really meant to be too
+usable.
+
 # Building apps
 
 To build applications, you'll need a RV32i newlib toolchain. Specifically you
