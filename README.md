@@ -42,6 +42,12 @@ should provide a nearly full-featured libc environment, and thus most
 single-threaded basic C code should build and run in this environment. It's
 up to you to define your syscalls as needed.
 
+# Generating a FELF
+
+Once you have an ELF you want to run in this environment, just use my other
+project `https://github.com/gamozolabs/elfloader` and pass the `--perms` flag
+to it to generate a FELF0002 with permissions.
+
 # Features
 
 - Byte-level permissions (can add ASAN-level protections to binary code)
