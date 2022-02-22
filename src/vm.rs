@@ -1038,6 +1038,51 @@ t5   {:08x} t6 {:08x}
         self.regs[reg as usize] = val;
     }
 
+    /// Read memory
+    pub fn read(&self, addr: u32, buf: &mut [u8]) -> Option<()> {
+        // Get the start and end indicies of the region
+        let start  = addr.checked_sub(BASE)?;
+        let end    = start.checked_add(buf.len() as u32)?;
+        let memory = self.memory.get(start as usize..end as usize)?;
+        let perms  = self.perms.get(start as usize..end as usize)?;
+
+        // Check permissions
+        if !perms.iter().all(|x| (*x & (Perm::Read as u8)) != 0) {
+            return None;
+        }
+
+        // Read the memory
+        buf.copy_from_slice(memory);
+
+        Some(())
+    }
+    
+    /// Write memory
+    pub fn write(&mut self, addr: u32, buf: &[u8]) -> Option<()> {
+        // Get the start and end indicies of the region
+        let start  = addr.checked_sub(BASE)?;
+        let end    = start.checked_add(buf.len() as u32)?;
+        let memory = self.memory.get_mut(start as usize..end as usize)?;
+        let perms  = self.perms.get_mut(start as usize..end as usize)?;
+
+        // Check permissions
+        if !perms.iter().all(|x| (*x & (Perm::Write as u8)) != 0) {
+            return None;
+        }
+
+        // Write the memory
+        memory.copy_from_slice(buf);
+        
+        // Update dirty bits
+        for idx in (start / 256)..(end + 255) / 256 {
+            let byte = idx / 8;
+            let bit  = idx % 8;
+            self.dirty[byte as usize] |= 1 << bit;
+        }
+
+        Some(())
+    }
+
     /// Execute the VM until the next VM exit
     pub fn run(&mut self) -> VmExit {
         // Determine the entry location
