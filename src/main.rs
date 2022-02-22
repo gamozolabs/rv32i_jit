@@ -1,6 +1,6 @@
 //! An extremely basic RISC-V (rv32i) emulator
 
-#![feature(array_chunks)]
+#![feature(array_chunks, array_windows)]
 
 mod x86asm;
 
@@ -11,7 +11,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 /// Error types for this crate
 #[derive(Debug)]
-enum Error {
+pub enum Error {
     /// Failed to read FELF from disk
     FelfRead(std::io::Error),
 
@@ -48,10 +48,10 @@ enum Error {
 /// A label which references an assembly location
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
-struct Label(usize);
+pub struct Label(usize);
 
 /// Registers for the pseudo-architecture we use for the assembler
-enum Reg {
+pub enum Reg {
     /// The A register!
     A,
 
@@ -60,7 +60,7 @@ enum Reg {
 }
 
 /// Condition codes for conditional branches
-enum Condition {
+pub enum Condition {
     /// Equal
     Eq,
 
@@ -72,7 +72,7 @@ enum Condition {
 }
 
 /// A trait defining the basic operations of an assembler
-trait Assembler<const BASE: u32, const MEMSIZE: usize,
+pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
                 const INSTRS: usize>: Default {
     /// Create a label for the current location in the assembly stream
     fn label(&mut self) -> Label;
@@ -82,6 +82,9 @@ trait Assembler<const BASE: u32, const MEMSIZE: usize,
 
     /// Start executing the JIT at `label` and return the pseudo-architecture
     /// A and B registers
+    ///
+    /// Upon return A should be the `ExitStatus` code that caused the exit
+    /// B should be further information for the exit status
     unsafe fn enter_jit(
         &self,
         label:     Label,
@@ -89,7 +92,7 @@ trait Assembler<const BASE: u32, const MEMSIZE: usize,
         mem:       &mut [u8; MEMSIZE],
         perms:     &mut [u8; MEMSIZE],
         jit_table: &[Label; INSTRS],
-    ) -> (u32, u32, u32);
+    ) -> (u32, u32);
 
     /// Emit a load immediate into a register
     fn load_imm(&mut self, reg: Reg, val: u32);
@@ -178,20 +181,8 @@ trait Assembler<const BASE: u32, const MEMSIZE: usize,
     fn ret(&mut self);
 }
 
-/// Different types of memory faults
-enum MemoryFault {
-    /// Failed to read `bytes` at `vaddr`
-    Read { vaddr: u32, bytes: u8 },
-
-    /// Failed to execute `bytes` at `vaddr`
-    Exec { vaddr: u32, bytes: u8 },
-
-    /// Failed to write `bytes` at `vaddr`
-    Write { vaddr: u32, bytes: u8 },
-}
-
 /// A guest virtual machine
-struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
+pub struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
           const BASE: u32, const MEMSIZE: usize, const INSTRS: usize> {
     /// VM GPR register state + PC
     regs: [u32; 33],
@@ -240,13 +231,43 @@ enum ExitStatus {
 
     /// Attempted to write memory without write permissions
     WriteFault = 0xdead0003,
+
+    /// An `ecall` instruction was executed, PC will point to the following
+    /// instruction for re-entry
+    Ecall = 0xdead0004,
+
+    /// An `ebreak` instruction was executed, PC will point to the following
+    /// instruction for re-entry
+    Ebreak = 0xdead0005,
+}
+
+/// Rust-typed VM exits
+#[derive(Debug, Clone, Copy)]
+pub enum VmExit {
+    /// Attempted to execute an instruction which is not executable
+    ExecFault { addr: u32 },
+
+    /// Attempted to execute an invalid instruction
+    InvalidOpcode,
+
+    /// Attempted to read memory which is not readable
+    ReadFault { addr: u32 },
+
+    /// Attempted to write to memory which is not writable
+    WriteFault { addr: u32 },
+
+    /// Guest executed an `ecall` instruction
+    Ecall,
+
+    /// Guest executed an `ebreak` instruction
+    Ebreak,
 }
 
 impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
      const BASE: u32, const MEMSIZE: usize, const INSTRS: usize>
         Vm<ASM, BASE, MEMSIZE, INSTRS> {
     /// Create a VM from a FELF
-    fn from_felf(felf: impl AsRef<Path>) -> Result<Self> {
+    pub fn from_felf(felf: impl AsRef<Path>) -> Result<Self> {
         // VMs must have a 32-bit aligned base
         if BASE & 0x3 != 0 {
             return Err(Error::BadAlignment);
@@ -333,7 +354,7 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
 
     /// JIT all the instructions in the VM, I guess it's not actually a JIT
     /// but a translation but too bad
-    fn jit(&mut self) -> Result<()> {
+    pub fn jit(&mut self) -> Result<()> {
         /// Writable permission mask
         const WRITE: u32 = u32::from_le_bytes([Perm::Write as u8; 4]);
 
@@ -364,8 +385,11 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
 
             // If it's not executable, emit the execution fault code
             if !executable {
+                // Update PC
+                self.asm.load_imm(Reg::A, pc);
+                self.asm.write_reg(32, Reg::A);
+
                 self.asm.load_imm(Reg::A, ExitStatus::ExecFault as u32);
-                self.asm.load_imm(Reg::B, pc);
                 self.asm.ret();
                 continue;
             }
@@ -535,14 +559,14 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
                 }
                 0b0100011 if matches!(funct3, 0b000 | 0b001 | 0b010) => {
                     // Stores
-                    
+
                     // Get imm components
                     let imm_11_5 = ((inst as i32) >> (25 - 5)) & !0b11111;
                     let imm_4_0  = (inst >> 7) & 0b11111;
 
                     // Get immediate
                     let imm = imm_11_5 as u32 | imm_4_0;
-                    
+
                     // Compute address to write to
                     self.asm.read_reg(Reg::A, rs1);
                     self.asm.load_imm(Reg::B, imm as u32);
@@ -567,7 +591,7 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
                 0b0010011 if matches!(funct3, 0b000 | 0b010 | 0b011 | 0b100 |
                                               0b110 | 0b111) => {
                     // Immediate operations
-                   
+
                     if rd != 0 {
                         // Get the immediate
                         let imm = ((inst as i32) >> 20) as u32;
@@ -582,13 +606,13 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
 
                             // SLTI
                             0b010 => self.asm.slt_a_b(),
-                            
+
                             // SLTIU
                             0b011 => self.asm.sltu_a_b(),
 
                             // XORI
                             0b100 => self.asm.xor_a_b(),
-                            
+
                             // ORI
                             0b110 => self.asm.or_a_b(),
 
@@ -742,32 +766,100 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS>,
                 }
                 0b1110011 if inst == 0b00000000000000000000000001110011 => {
                     // ECALL
+
+                    // Update PC to the instruction following the call
+                    self.asm.load_imm(Reg::A, pc.wrapping_add(4));
+                    self.asm.write_reg(32, Reg::A);
+
+                    // Update return status
+                    self.asm.load_imm(Reg::A, ExitStatus::Ecall as u32);
+                    self.asm.ret();
                 }
                 0b1110011 if inst == 0b00000000000100000000000001110011 => {
                     // EBREAK
+
+                    // Update PC to the instruction following the break
+                    self.asm.load_imm(Reg::A, pc.wrapping_add(4));
+                    self.asm.write_reg(32, Reg::A);
+
+                    // Update return status
+                    self.asm.load_imm(Reg::A, ExitStatus::Ebreak as u32);
+                    self.asm.ret();
                 }
                 _ => {
+                    // Update PC
+                    self.asm.load_imm(Reg::A, pc);
+                    self.asm.write_reg(32, Reg::A);
+
                     // Invalid opcode
                     self.asm.load_imm(Reg::A,
                         ExitStatus::InvalidOpcode as u32);
-                    self.asm.load_imm(Reg::B, pc);
                     self.asm.ret();
                 }
             }
         }
 
-        let entry = self.jit_table[(self.regs[32] - BASE) as usize / 4];
-        unsafe {
-            self.asm.finalize();
-            println!("{:#x?}",
-                self.asm.enter_jit(entry,
-                    &mut self.regs,
-                    &mut self.memory,
-                    &mut self.perms,
-                    &self.jit_table));
-        }
+        // Commit the JIT to RWX memory
+        self.asm.finalize();
 
         Ok(())
+    }
+
+    /// Pretty print target register state
+    pub fn dump_regs(&self) {
+        println!(r#"pc   {:08x}
+zero {:08x} ra {:08x} sp  {:08x} gp  {:08x} tp {:08x} t0 {:08x}
+t1   {:08x} t2 {:08x} fp  {:08x} s1  {:08x} a0 {:08x} a1 {:08x}
+a2   {:08x} a3 {:08x} a4  {:08x} a5  {:08x} a6 {:08x} a7 {:08x}
+s2   {:08x} s3 {:08x} s4  {:08x} s5  {:08x} s6 {:08x} s7 {:08x}
+s8   {:08x} s9 {:08x} s10 {:08x} s11 {:08x} t3 {:08x} t4 {:08x}
+t5   {:08x} t6 {:08x}
+        "#,
+        self.regs[32],
+        self.regs[ 0], self.regs[ 1], self.regs[ 2], self.regs[ 3],
+        self.regs[ 4], self.regs[ 5], self.regs[ 6], self.regs[ 7],
+        self.regs[ 8], self.regs[ 9], self.regs[10], self.regs[11],
+        self.regs[12], self.regs[13], self.regs[14], self.regs[15],
+        self.regs[16], self.regs[17], self.regs[18], self.regs[19],
+        self.regs[20], self.regs[21], self.regs[22], self.regs[23],
+        self.regs[24], self.regs[25], self.regs[26], self.regs[27],
+        self.regs[28], self.regs[29], self.regs[30], self.regs[31]);
+    }
+
+    /// Execute the VM until the next VM exit
+    pub fn run(&mut self) -> VmExit {
+        // Determine the entry location
+        let offset = self.regs[32].checked_sub(BASE);
+        let entry = offset.and_then(|x| self.jit_table.get(x as usize / 4));
+        if entry.is_none() { return VmExit::ExecFault { addr: self.regs[32] } }
+        let entry = *entry.unwrap();
+
+        // Enter the JIT
+        let (code, status) = unsafe {
+            self.asm.enter_jit(entry,
+                &mut self.regs,
+                &mut self.memory,
+                &mut self.perms,
+                &self.jit_table)
+        };
+
+        // Translate the return code
+        if code == ExitStatus::ExecFault as u32 {
+            VmExit::ExecFault { addr: status }
+        } else if code == ExitStatus::InvalidOpcode as u32 {
+            VmExit::InvalidOpcode
+        } else if code == ExitStatus::ReadFault as u32 {
+            VmExit::ReadFault { addr: status }
+        } else if code == ExitStatus::WriteFault as u32 {
+            VmExit::WriteFault { addr: status }
+        } else if code == ExitStatus::Ecall as u32 {
+            VmExit::Ecall
+        } else if code == ExitStatus::Ebreak as u32 {
+            VmExit::Ebreak
+        } else {
+            panic!("VM exited with unknown exit status {:#x} {:#x}",
+                code, status);
+        }
     }
 }
 
@@ -783,6 +875,10 @@ fn main() -> Result<()> {
 
     // JIT the VM
     vm.jit()?;
+
+    // Execute the VM until exit
+    println!("{:#x?}", vm.run());
+    vm.dump_regs();
 
     Ok(())
 }
