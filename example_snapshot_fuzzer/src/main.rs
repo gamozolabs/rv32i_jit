@@ -114,14 +114,16 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
 
             // Generate an input length and inject it
             let input_len = rng.rand() as u16 % 2048;
-            vm.write_u16(fuzz_input_len, input_len).unwrap();
 
             // Generate an input and inject it
             for _ in 0..input_len {
                 data.push(rng.rand() as u8);
             }
-            vm.write(fuzz_input, &data).unwrap();
         }
+
+        // Write in the input
+        vm.write_u16(fuzz_input_len, data.len() as u16).unwrap();
+        vm.write(fuzz_input, &data).unwrap();
 
         // Loop while handling vmexits
         let mut execute = true;
