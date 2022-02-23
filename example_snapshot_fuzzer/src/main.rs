@@ -277,8 +277,10 @@ fn main() -> Result<()> {
     // Load the corpus
     for ent in std::fs::read_dir("corpus").unwrap() {
         let path = ent.unwrap().path();
-        stats.corpus.push(Box::new(std::fs::read(path)
-                .unwrap().into_boxed_slice()));
+        let input = std::fs::read(path).unwrap();
+        if input.len() < 65536 {
+            stats.corpus.push(Box::new(input.into_boxed_slice()));
+        }
     }
 
     // Fork the VM for each thread
