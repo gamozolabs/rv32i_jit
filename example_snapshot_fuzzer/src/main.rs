@@ -1,5 +1,7 @@
 #![feature(scoped_threads)]
 
+pub mod atomicvec;
+
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,6 +9,7 @@ use std::collections::BTreeSet;
 
 use vm::{Vm, Register, VmExit, Result};
 use vm::x86asm::AsmStream;
+use atomicvec::AtomicVec;
 
 // VM properties we're going to use
 const BASE:    u32   = 0x10000;
@@ -28,7 +31,6 @@ fn rdtsc() -> u64 {
 }
 
 /// Stats to track what's going on with our VMs!
-#[derive(Default)]
 struct Statistics {
     /// Number of fuzz cases executed
     cases: AtomicU64,
@@ -44,6 +46,9 @@ struct Statistics {
 
     /// Coverage database, set of unique PCs executed
     coverage: Mutex<BTreeSet<u32>>,
+
+    /// Input corpus
+    corpus: AtomicVec<Box<[u8]>, { 32 * 1024 }>,
 }
 
 struct Rng(u64);
@@ -70,7 +75,7 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
     let mut cycles_vmexit = 0; // Cycles handling VM exits/syscalls
 
     let mut data = Vec::new();
-    let mut rng = Rng(0xe18f983236ec04e7);
+    let mut rng = Rng(rand::random());
 
     loop {
         // Reset VM state to the state of `orig_vm`
@@ -78,19 +83,40 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
         vm.reset_to(orig_vm);
         cycles_reset += rdtsc() - it;
 
-        // Generate an input length and inject it
-        let input_len = rng.rand() as u16 % 1024;
-        vm.write_u16(fuzz_input_len, input_len).unwrap();
-
-        // Generate an input and inject it
+        // Reset the fuzz input
         data.clear();
-        for _ in 0..input_len {
-            data.push(rng.rand() as u8);
+
+        // Pick a random fuzz input from the corpus
+        let input = rng.rand().checked_rem(stats.corpus.len())
+            .and_then(|x| stats.corpus.get(x));
+        if let (0, Some(input)) = (rng.rand() % 2, input) {
+            // Copy the existing input
+            data.extend_from_slice(input);
+
+            if data.len() > 0 {
+                // Mutate it a bit
+                for _ in 0..rng.rand() % 64 {
+                    let idx = rng.rand() % data.len();
+                    data[idx] = rng.rand() as u8;
+                }
+            }
+        } else {
+            // Generate a completely new input
+
+            // Generate an input length and inject it
+            let input_len = rng.rand() as u16 % 1024;
+            vm.write_u16(fuzz_input_len, input_len).unwrap();
+
+            // Generate an input and inject it
+            for _ in 0..input_len {
+                data.push(rng.rand() as u8);
+            }
+            vm.write(fuzz_input, &data).unwrap();
         }
-        vm.write(fuzz_input, &data).unwrap();
 
         // Loop while handling vmexits
         let mut execute = true;
+        let mut input_saved = false;
         while execute {
             // Execute the VM!
             let it = rdtsc();
@@ -103,7 +129,14 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
                 VmExit::Coverage => {
                     // Record coverage
                     let pc = vm.reg(Register::PC);
-                    stats.coverage.lock().unwrap().insert(pc);
+                    if stats.coverage.lock().unwrap().insert(pc) {
+                        if !input_saved {
+                            // New coverage for the first time, save the input
+                            stats.corpus.push(
+                                Box::new(data.clone().into_boxed_slice()));
+                            input_saved = true;
+                        }
+                    }
                 }
                 VmExit::Ecall => {
                     // Syscall
@@ -191,7 +224,14 @@ fn main() -> Result<()> {
     };
 
     // Create statistics structure
-    let stats = Statistics::default();
+    let stats = Statistics {
+        cases:         AtomicU64::new(0),
+        cycles_reset:  AtomicU64::new(0),
+        cycles_run:    AtomicU64::new(0),
+        cycles_vmexit: AtomicU64::new(0),
+        coverage:      Default::default(),
+        corpus:        AtomicVec::new(),
+    };
 
     // Fork the VM for each thread
     std::thread::scope(|s| {
@@ -210,6 +250,7 @@ fn main() -> Result<()> {
 
             // Print stats
             let coverage = stats.coverage.lock().unwrap().len();
+            let corpus   = stats.corpus.len();
             let uptime   = it.elapsed().as_secs_f64();
             let cases    = stats.cases.load(Ordering::Relaxed);
             let crst     = stats.cycles_reset.load(Ordering::Relaxed);
@@ -221,7 +262,7 @@ fn main() -> Result<()> {
             let prun     = crun as f64 / ctot as f64;
             let pvme     = cvme as f64 / ctot as f64;
             println!("[{uptime:12.6}] cases {cases:10} | fcps {fcps:10.1} | \
-                coverage {coverage:7} | \
+                coverage {coverage:7} | corpus {corpus:7} | \
                 reset {prst:5.3} | run {prun:5.3} | vmexit {pvme:5.3}");
         }
     });
