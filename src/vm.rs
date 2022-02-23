@@ -205,6 +205,25 @@ pub trait Assembler<const BASE: u32, const MEMSIZE: usize,
     fn ret(&mut self);
 }
 
+/// Helper for implementing readers
+macro_rules! impl_read {
+    ($ident:ident, $ty:ty) => {
+        pub fn $ident(&self, addr: u32) -> Option<$ty> {
+            let mut tmp = [0u8; std::mem::size_of::<$ty>()];
+            self.read(addr, &mut tmp).map(|_| <$ty>::from_le_bytes(tmp))
+        }
+    }
+}
+
+/// Helper for implementing writers
+macro_rules! impl_write {
+    ($ident:ident, $ty:ty) => {
+        pub fn $ident(&mut self, addr: u32, val: $ty) -> Option<()> {
+            self.write(addr, &val.to_le_bytes())
+        }
+    }
+}
+
 /// A guest virtual machine
 #[derive(Clone)]
 pub struct Vm<ASM: Assembler<BASE, MEMSIZE, INSTRS, DIRTY>,
@@ -318,8 +337,8 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS, DIRTY>,
      const BASE: u32, const MEMSIZE: usize, const INSTRS: usize,
      const STACK_SIZE: u32, const HEAP_SIZE: u32, const DIRTY: usize>
         Vm<ASM, BASE, MEMSIZE, INSTRS, STACK_SIZE, HEAP_SIZE, DIRTY> {
-    /// Create a VM from a FELF
-    pub fn from_felf(felf: impl AsRef<Path>) -> Result<Self> {
+    /// Create a VM from a FELF with given `argv`
+    pub fn from_felf(felf: impl AsRef<Path>, argv: &[&str]) -> Result<Self> {
         // VMs must have a 32-bit aligned base
         if BASE & 0x3 != 0 {
             return Err(Error::BadAlignment);
@@ -427,11 +446,32 @@ impl<ASM: Assembler<BASE, MEMSIZE, INSTRS, DIRTY>,
         // [NULL pointer (end of argv)]
         // [argv...]
         // [argc: u32]
-        ret.regs[2] = stack + STACK_SIZE - 8;
+        ret.regs[2] = stack + STACK_SIZE - 0x8 - (argv.len() * 4) as u32;
 
-        // Zero out argc and put a NULL terminator at argv[0]
-        ret.memory[(ret.regs[2] - BASE) as usize..][..8]
-            .copy_from_slice(&[0u8; 8]);
+        // Write in argc
+        ret.write_u32(ret.regs[2], argv.len() as u32)
+            .expect("Failed to write in argc");
+
+        // Write in args
+        for (ii, arg) in argv.iter().enumerate() {
+            // Allocate storage for the argument and null terminator
+            let addr = ret.alloc(arg.len() as u32 + 1)
+                .expect("Failed to allocate room for argument");
+
+            // Write in the argument and null terminator
+            ret.write(addr, arg.as_bytes())
+                .expect("Failed to write in argument");
+            ret.write_u8(addr + arg.len() as u32, 0)
+                .expect("Failed to write in argument");
+
+            // Write in the pointer to the argument
+            ret.write_u32(ret.regs[2] + 4 + (ii * 4) as u32, addr)
+                .expect("Failed to write in args");
+        }
+
+        // Write in NULL terminator to argv
+        ret.write_u32(ret.regs[2] + 4 + (argv.len() * 4) as u32, 0)
+            .expect("Failed to write in argv NULL terminator");
 
         // Allocate a heap
         let heap = ret.alloc(HEAP_SIZE).ok_or(Error::AllocHeap)?;
@@ -1082,6 +1122,36 @@ t5   {:08x} t6 {:08x}
 
         Some(())
     }
+
+    impl_read!(read_u8,    u8);
+    impl_read!(read_u16,   u16);
+    impl_read!(read_u32,   u32);
+    impl_read!(read_u64,   u64);
+    impl_read!(read_u128,  u128);
+    impl_read!(read_usize, usize);
+    impl_read!(read_i8,    i8);
+    impl_read!(read_i16,   i16);
+    impl_read!(read_i32,   i32);
+    impl_read!(read_i64,   i64);
+    impl_read!(read_i128,  i128);
+    impl_read!(read_isize, isize);
+    impl_read!(read_f32,   f32);
+    impl_read!(read_f64,   f64);
+    
+    impl_write!(write_u8,    u8);
+    impl_write!(write_u16,   u16);
+    impl_write!(write_u32,   u32);
+    impl_write!(write_u64,   u64);
+    impl_write!(write_u128,  u128);
+    impl_write!(write_usize, usize);
+    impl_write!(write_i8,    i8);
+    impl_write!(write_i16,   i16);
+    impl_write!(write_i32,   i32);
+    impl_write!(write_i64,   i64);
+    impl_write!(write_i128,  i128);
+    impl_write!(write_isize, isize);
+    impl_write!(write_f32,   f32);
+    impl_write!(write_f64,   f64);
 
     /// Execute the VM until the next VM exit
     pub fn run(&mut self) -> VmExit {
