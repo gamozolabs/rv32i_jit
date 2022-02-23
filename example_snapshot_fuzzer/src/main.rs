@@ -239,7 +239,7 @@ fn main() -> Result<()> {
 
     // Fork the VM for each thread
     std::thread::scope(|s| {
-        for _ in 0..32 {
+        for _ in 0..1 {
             let vm = orig_vm.clone();
             s.spawn(|_| {
                 worker(&orig_vm, vm, &stats, fuzz_input, fuzz_input_len);
