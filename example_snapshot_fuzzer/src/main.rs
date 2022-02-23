@@ -89,6 +89,23 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
     let mut cycles_run    = 0; // Cycles running the VM
     let mut cycles_vmexit = 0; // Cycles handling VM exits/syscalls
 
+    macro_rules! update_stats {
+        () => {
+            // Update stats
+            stats.cases.fetch_add(cases_execed, Ordering::Relaxed);
+            stats.cycles_reset.fetch_add(cycles_reset, Ordering::Relaxed);
+            stats.cycles_run.fetch_add(cycles_run, Ordering::Relaxed);
+            stats.cycles_vmexit.fetch_add(cycles_vmexit, Ordering::Relaxed);
+            cases_execed  = 0;
+            cycles_reset  = 0;
+            cycles_run    = 0;
+            cycles_vmexit = 0;
+
+            // Save the current time
+            last_report = rdtsc();
+        }
+    }
+
     let mut data = Vec::new();
     let mut rng = Rng(rand::random());
 
@@ -147,6 +164,9 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
                     // Record coverage
                     let pc = vm.reg(Register::PC);
 
+                    // Merge stats immediately
+                    update_stats!();
+
                     let mut coverage = stats.coverage.lock().unwrap();
                     if coverage.insert(pc) {
                         // Record the PC to a file
@@ -154,8 +174,9 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
                             .unwrap();
 
                         writeln!(stats.graph.lock().unwrap(),
-                            "{:16.6} {:10}",
+                            "{:16.6} {:10} {:10}",
                             stats.start.elapsed().as_secs_f64(),
+                            stats.cases.load(Ordering::Relaxed),
                             coverage.len()).unwrap();
 
                         if !input_saved {
@@ -208,22 +229,11 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
         // Update number of cases
         cases_execed += 1;
 
-        // Only update statistics globally every 100M cycles
+        // Only update statistics globally every 10M cycles
         // Divide your CPUs clock rate by this to get the approximate update
         // interval. This is to prevent cache thrashing between cores
-        if rdtsc() - last_report > 100_000_000 {
-            // Update stats
-            stats.cases.fetch_add(cases_execed, Ordering::Relaxed);
-            stats.cycles_reset.fetch_add(cycles_reset, Ordering::Relaxed);
-            stats.cycles_run.fetch_add(cycles_run, Ordering::Relaxed);
-            stats.cycles_vmexit.fetch_add(cycles_vmexit, Ordering::Relaxed);
-            cases_execed  = 0;
-            cycles_reset  = 0;
-            cycles_run    = 0;
-            cycles_vmexit = 0;
-
-            // Save the current time
-            last_report = rdtsc();
+        if rdtsc() - last_report > 10_000_000 {
+            update_stats!();
         }
     }
 }
