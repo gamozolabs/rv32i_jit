@@ -2,6 +2,8 @@
 
 pub mod atomicvec;
 
+use std::fs::File;
+use std::io::Write;
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,6 +45,9 @@ struct Statistics {
 
     /// Cycles handling VM exits
     cycles_vmexit: AtomicU64,
+
+    /// Coverage log
+    log: Mutex<File>,
 
     /// Coverage database, set of unique PCs executed
     coverage: Mutex<BTreeSet<u32>>,
@@ -108,7 +113,7 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
             // Generate a completely new input
 
             // Generate an input length and inject it
-            let input_len = rng.rand() as u16 % 1024;
+            let input_len = rng.rand() as u16 % 2048;
             vm.write_u16(fuzz_input_len, input_len).unwrap();
 
             // Generate an input and inject it
@@ -134,6 +139,10 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
                     // Record coverage
                     let pc = vm.reg(Register::PC);
                     if stats.coverage.lock().unwrap().insert(pc) {
+                        // Record the PC to a file
+                        writeln!(stats.log.lock().unwrap(), "{:#x}", pc)
+                            .unwrap();
+
                         if !input_saved {
                             // New coverage for the first time, save the input
                             stats.corpus.push(
@@ -234,8 +243,16 @@ fn main() -> Result<()> {
         cycles_run:    AtomicU64::new(0),
         cycles_vmexit: AtomicU64::new(0),
         coverage:      Default::default(),
+        log:           Mutex::new(File::create("coverage.txt").unwrap()),
         corpus:        AtomicVec::new(),
     };
+
+    // Load the corpus
+    for ent in std::fs::read_dir("corpus").unwrap() {
+        let path = ent.unwrap().path();
+        stats.corpus.push(Box::new(std::fs::read(path)
+                .unwrap().into_boxed_slice()));
+    }
 
     // Fork the VM for each thread
     std::thread::scope(|s| {
