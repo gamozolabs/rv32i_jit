@@ -49,6 +49,12 @@ struct Statistics {
     /// Coverage log
     log: Mutex<File>,
 
+    /// Coverage graph log
+    graph: Mutex<File>,
+
+    /// Start time for the fuzzer
+    start: Instant,
+
     /// Coverage database, set of unique PCs executed
     coverage: Mutex<BTreeSet<u32>>,
 
@@ -140,10 +146,17 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
                 VmExit::Coverage => {
                     // Record coverage
                     let pc = vm.reg(Register::PC);
-                    if stats.coverage.lock().unwrap().insert(pc) {
+
+                    let mut coverage = stats.coverage.lock().unwrap();
+                    if coverage.insert(pc) {
                         // Record the PC to a file
                         writeln!(stats.log.lock().unwrap(), "{:#x}", pc)
                             .unwrap();
+
+                        writeln!(stats.graph.lock().unwrap(),
+                            "{:16.6} {:10}",
+                            stats.start.elapsed().as_secs_f64(),
+                            coverage.len()).unwrap();
 
                         if !input_saved {
                             // New coverage for the first time, save the input
@@ -244,7 +257,9 @@ fn main() -> Result<()> {
         cycles_reset:  AtomicU64::new(0),
         cycles_run:    AtomicU64::new(0),
         cycles_vmexit: AtomicU64::new(0),
+        start:         Instant::now(),
         coverage:      Default::default(),
+        graph:         Mutex::new(File::create("graph.txt").unwrap()),
         log:           Mutex::new(File::create("coverage.txt").unwrap()),
         corpus:        AtomicVec::new(),
     };
