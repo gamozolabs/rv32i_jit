@@ -68,6 +68,10 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
     // Time of the last global statistics update
     let mut last_report = rdtsc();
 
+    // Really hacky way of getting NUMA copies, terrible for caches, but still
+    // better scaling than if we didn't clone per NUMA node.
+    let orig_vm = orig_vm.clone();
+
     // Thread-local statistics we merge only when needed
     let mut cases_execed  = 0;
     let mut cycles_reset  = 0; // Cycles restoring the VM state
@@ -80,7 +84,7 @@ fn worker(orig_vm: &OurVm, mut vm: OurVm, stats: &Statistics,
     loop {
         // Reset VM state to the state of `orig_vm`
         let it = rdtsc();
-        vm.reset_to(orig_vm);
+        vm.reset_to(&orig_vm);
         cycles_reset += rdtsc() - it;
 
         // Reset the fuzz input
@@ -235,7 +239,7 @@ fn main() -> Result<()> {
 
     // Fork the VM for each thread
     std::thread::scope(|s| {
-        for _ in 0..1 {
+        for _ in 0..32 {
             let vm = orig_vm.clone();
             s.spawn(|_| {
                 worker(&orig_vm, vm, &stats, fuzz_input, fuzz_input_len);
