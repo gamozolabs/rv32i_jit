@@ -35,12 +35,14 @@ usable.
 
 # Building apps
 
-To build applications, you'll need a RV32i newlib toolchain. Specifically you
-need to build all code with `-march=rv32i` and as soft-float, and you need
-to build with `-specs=nosys.specs` as is done in the example project. This
-should provide a nearly full-featured libc environment, and thus most
-single-threaded basic C code should build and run in this environment. It's
-up to you to define your syscalls as needed.
+To build applications, you'll need a [RV32i newlib toolchain][newlib].
+Specifically you need to build all code with `-march=rv32i` and as soft-float,
+and you need to build with `-specs=nosys.specs` as is done in the example
+project. This should provide a nearly full-featured libc environment, and thus
+most single-threaded basic C code should build and run in this environment.
+It's up to you to define your syscalls as needed.
+
+[newlib]: https://github.com/riscv-collab/riscv-gnu-toolchain
 
 # Generating a FELF
 
@@ -73,7 +75,7 @@ hello worlds per second. Near-linear scaling while gahtering code coverage
 and the like.
 
 ```
-pleb@polar ~ $ ./jit 
+pleb@polar ~ $ ./jit
 [    0.100064] cases    1109821 | fcps 11091081.8 | coverage    1522 | reset 0.028 | run 0.953 | vmexit 0.019
 [    0.200148] cases    1748147 | fcps  8734259.0 | coverage    1522 | reset 0.029 | run 0.952 | vmexit 0.019
 [    0.300216] cases    2536983 | fcps  8450525.5 | coverage    1522 | reset 0.029 | run 0.952 | vmexit 0.019
